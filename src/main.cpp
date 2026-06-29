@@ -1,25 +1,117 @@
-#include <Arduino.h>
+#include <ModbusMaster.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <PubSubClient.h>
 #include <StepRunner.h>
 
-#define LED_PIN 2
+ModbusMaster node;
+
+WiFiClient ESP32_S3_Client;
+PubSubClient client_MQTT(ESP32_S3_Client);
+
+const char* MQTT_server   = "192.168.22.173";
+const int   MQTT_port     = 1883;
+const char* MQTT_username = "adill";
+const char* MQTT_password = "00111100";
+
+float temperature, humidity = 0.00;
+
+void connect_MQTT()
+{
+  while (!client_MQTT.connected())
+  {
+    String client_ID = "ESP32-S3-Temperature_and_Humidity-RS-WS-N01-6";
+
+    Serial.println();
+    Serial.println((WiFi.status() == WL_CONNECTED) ? "WiFi Connected" : "WiFi Disconnected");
+    Serial.print("Connecting to MQTT...");
+
+    if (client_MQTT.connect(client_ID.c_str(), MQTT_username, MQTT_password))
+    {
+      Serial.println("OK");
+      // client_MQTT.subscribe("TesT/ESP32-S3/control");
+    }
+    else
+    {
+      Serial.print("Failed connect to MQTT. rc=");
+      Serial.println(client_MQTT.state());
+      delay(3000);
+    }
+  }
+}
+
+void callback_MQTT(char* topic, byte* payload, unsigned int length)
+{
+  Serial.print("Topic: ");
+  Serial.println(topic);
+
+  String message = "";
+  for (int i = 0; i < length; i++) {message += char(payload[i]);}
+
+  Serial.println(message);
+}
+
+void publish_MQTT()
+{
+  client_MQTT.publish("TesT/ESP32-S3/Temperature", String(temperature, 2).c_str());
+  client_MQTT.publish("TesT/ESP32-S3/Humidity", String(humidity, 2).c_str());
+}
+
+void Temperature_Humidity_sensor()
+{
+  uint8_t result = node.readHoldingRegisters(0x0000, 2);
+  
+  if (result == node.ku8MBSuccess)
+  {
+    humidity = node.getResponseBuffer(0) / 10.0;
+    temperature = int16_t(node.getResponseBuffer(1)) / 10.0;
+    
+    Serial.print("Temp     : ");
+    Serial.print(temperature);
+    Serial.println(" C");
+
+    Serial.print("Humidity : ");
+    Serial.print(humidity);
+    Serial.println(" %RH");
+  }
+  else
+  {
+    Serial.print("Modbus Error: ");
+    Serial.println(result);
+  }
+}
+
+StepRunner publish_MQTT_task(publish_MQTT, 60000);
+StepRunner Temperature_Humidity_sensor_task(Temperature_Humidity_sensor, 5000);
 
 void setup()
 {
   Serial.begin(115200);
-  
-  pinMode(LED_PIN, OUTPUT);
-  
-  delay(1000); 
-  Serial.println("\n--- ESP32 Berhasil Menyala! ---");
+
+  Serial2.begin(4800, SERIAL_8N1, 16, 17);
+  node.begin(1, Serial2);   // Slave ID = 1
+
+  WiFiManager wm;
+
+  if (!wm.autoConnect("ESP32-S3-WiFi_Manager"))
+  {
+    Serial.println("Failed connect to WiFi");
+    ESP.restart();
+  }
+
+  Serial.println();
+  Serial.println("WiFi Connected");
+  Serial.println(WiFi.localIP());
+
+  client_MQTT.setServer(MQTT_server, MQTT_port);
+  client_MQTT.setCallback(callback_MQTT);
+  client_MQTT.setKeepAlive(120);
 }
 
 void loop()
 {
-  digitalWrite(LED_PIN, HIGH);
-  Serial.println("Status: LED Nyala");
-  delay(1000);
-  
-  digitalWrite(LED_PIN, LOW);
-  Serial.println("Status: LED Mati");
-  delay(1000);
+  connect_MQTT();
+  client_MQTT.loop();
+  Temperature_Humidity_sensor_task.run();
+  publish_MQTT_task.run();
 }

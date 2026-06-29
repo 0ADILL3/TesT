@@ -1,0 +1,17 @@
+import keyboard
+
+buffer = ""
+
+def on_key(event):
+    global buffer
+
+    if event.event_type == "down":
+        if len(event.name) == 1:
+            buffer += event.name
+            print(buffer)
+        elif event.name == "enter":
+            print("Data:", buffer)
+            buffer = ""
+
+keyboard.hook(on_key)
+keyboard.wait()
